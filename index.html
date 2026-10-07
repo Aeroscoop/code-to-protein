@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code as Artefact: Code-to-Protein Visualizer</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            protein: {
+              js: '#00f0ff',   // Cyan
+              py: '#10b981',   // Green
+              html: '#f97316', // Orange
+              css: '#ec4899',  // Pink
+              ts: '#3b82f6',   // Blue
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Three.js CDN & OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- FontAwesome Icons for crisp visual cues -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    /* Custom Scrollbar for code sidebar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(51, 65, 85, 0.8);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(71, 85, 105, 1);
+    }
+
+    /* Glassmorphism utility */
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .glass-card {
+      background: rgba(30, 41, 59, 0.6);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Canvas styling */
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 0;
+    }
+
+    /* Code line styling */
+    .code-line {
+      font-family: 'Fira Code', 'Courier New', Courier, monospace;
+      font-size: 0.825rem;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .code-line-highlight {
+      background-color: rgba(59, 130, 246, 0.25);
+      border-left: 3px solid #3b82f6;
+    }
+
+    /* Pulse effect for drag & drop zone */
+    @keyframes pulse-border {
+      0%, 100% { border-color: rgba(59, 130, 246, 0.4); }
+      50% { border-color: rgba(59, 130, 246, 0.9); }
+    }
+    .drag-active {
+      animation: pulse-border 1.5s infinite;
+      background-color: rgba(30, 58, 138, 0.3) !important;
+    }
+  </style>
+</head>
+<body class="h-full overflow-hidden select-none font-sans bg-slate-950 text-slate-100">
+
+  <!-- 3D WebGL Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Main UI Overlay Container -->
+  <div class="relative z-10 flex flex-col h-full pointer-events-none">
+
+    <!-- Top Navigation / Header -->
+    <header class="glass-panel px-6 py-3 flex items-center justify-between pointer-events-auto shadow-xl">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-500 via-emerald-500 to-pink-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <i class="fa-solid to-dna fa-dna text-slate-950 text-xl"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-wide bg-gradient-to-r from-cyan-400 via-emerald-300 to-pink-400 bg-clip-text text-transparent">
+            Code as Artefact
+          </h1>
+          <p class="text-xs text-slate-400">Code-to-Protein Quaternary Visualizer</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Buttons & Stats -->
+      <div class="flex items-center space-x-4">
+        <!-- Dataset Info Summary -->
+        <div id="dataset-stats" class="hidden md:flex items-center space-x-4 text-xs text-slate-300 bg-slate-900/60 px-3 py-1.5 rounded-md border border-slate-800">
+          <div><span class="text-slate-500">Chains:</span> <span id="stat-chains" class="font-mono text-cyan-400 font-semibold">0</span></div>
+          <div class="h-3 w-px bg-slate-800"></div>
+          <div><span class="text-slate-500">Helices (Funcs):</span> <span id="stat-helices" class="font-mono text-emerald-400 font-semibold">0</span></div>
+          <div class="h-3 w-px bg-slate-800"></div>
+          <div><span class="text-slate-500">Sheets (Ifs):</span> <span id="stat-sheets" class="font-mono text-amber-400 font-semibold">0</span></div>
+          <div class="h-3 w-px bg-slate-800"></div>
+          <div><span class="text-slate-500">Bridges (Imports):</span> <span id="stat-bridges" class="font-mono text-pink-400 font-semibold">0</span></div>
+        </div>
+
+        <!-- Sample Demo Load Button -->
+        <button id="btn-demo" class="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-medium rounded-lg shadow-md transition-all flex items-center space-x-1.5">
+          <i class="fa-solid fa-flask"></i>
+          <span>Load Demo Codebase</span>
+        </button>
+
+        <!-- Folder Upload Button -->
+        <label for="folder-upload" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium rounded-lg cursor-pointer transition-all flex items-center space-x-1.5">
+          <i class="fa-solid fa-folder-open text-amber-400"></i>
+          <span>Open Folder</span>
+        </label>
+        <input type="file" id="folder-upload" webkitdirectory directory multiple class="hidden">
+      </div>
+    </header>
+
+    <!-- Center Drag & Drop Zone (Visible when no files or triggered) -->
+    <div id="drop-zone" class="absolute inset-x-8 top-20 bottom-8 border-2 border-dashed border-slate-700/60 rounded-2xl flex flex-col items-center justify-center pointer-events-auto transition-all bg-slate-950/80 backdrop-blur-md z-20">
+      <div class="max-w-md text-center p-8 glass-card rounded-xl shadow-2xl border border-slate-700/50">
+        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center text-cyan-400 text-2xl">
+          <i class="fa-solid fa-box-archive"></i>
+        </div>
+        <h2 class="text-xl font-bold mb-2 text-slate-100">Drop Code Folder Here</h2>
+        <p class="text-xs text-slate-400 mb-6 leading-relaxed">
+          Upload or drag your source code directory (<span class="text-cyan-400 font-mono">.js</span>, <span class="text-emerald-400 font-mono">.py</span>, <span class="text-orange-400 font-mono">.html</span>, <span class="text-pink-400 font-mono">.css</span>, <span class="text-blue-400 font-mono">.ts</span>).
+          The parser will fold the codebase into a 3D quaternary protein complex.
+        </p>
+        <div class="flex items-center justify-center gap-3">
+          <label for="file-upload-input" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg shadow-lg shadow-cyan-600/30 cursor-pointer transition">
+            Select Folder / Files
+          </label>
+          <input type="file" id="file-upload-input" webkitdirectory directory multiple class="hidden">
+          <button id="btn-load-demo-inline" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition">
+            Try Demo Codebase
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Workspace (Controls, Tooltips, Sidebar) -->
+    <div class="flex-1 relative flex overflow-hidden">
+
+      <!-- Floating Visual Control Panel (Left Top) -->
+      <div class="absolute left-4 top-4 z-10 w-72 glass-panel rounded-xl p-4 shadow-xl border border-slate-800/80 pointer-events-auto space-y-4">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <i class="fa-solid fa-sliders text-cyan-400"></i> Visual Control Panel
+          </h3>
+          <button id="btn-toggle-controls" class="text-slate-400 hover:text-white text-xs">
+            <i class="fa-solid fa-chevron-up"></i>
+          </button>
+        </div>
+
+        <div id="controls-body" class="space-y-3 text-xs">
+          <!-- Ribbon Thickness Slider -->
+          <div>
+            <div class="flex justify-between mb-1 text-slate-400">
+              <span>Ribbon Radius</span>
+              <span id="val-thickness" class="font-mono text-cyan-400">0.45</span>
+            </div>
+            <input type="range" id="slider-thickness" min="0.1" max="1.2" step="0.05" value="0.45" class="w-full accent-cyan-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+          </div>
+
+          <!-- Folding / Physics Strength Slider -->
+          <div>
+            <div class="flex justify-between mb-1 text-slate-400">
+              <span>Folding Intensity</span>
+              <span id="val-physics" class="font-mono text-emerald-400">1.0</span>
+            </div>
+            <input type="range" id="slider-physics" min="0.0" max="2.5" step="0.1" value="1.0" class="w-full accent-emerald-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+          </div>
+
+          <!-- Covalent Bridge Glow Slider -->
+          <div>
+            <div class="flex justify-between mb-1 text-slate-400">
+              <span>Bridge Glow</span>
+              <span id="val-glow" class="font-mono text-pink-400">1.2</span>
+            </div>
+            <input type="range" id="slider-glow" min="0.2" max="3.0" step="0.1" value="1.2" class="w-full accent-pink-500 bg-slate-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+          </div>
+
+          <!-- Color Mode Toggle -->
+          <div class="pt-2 border-t border-slate-800/80">
+            <label class="block text-slate-400 mb-1.5">Color Scheme Mode</label>
+            <div class="grid grid-cols-2 gap-2 bg-slate-900/80 p-1 rounded-lg border border-slate-800">
+              <button id="btn-color-filetype" class="py-1 px-2 text-center rounded text-[11px] font-medium bg-cyan-600 text-white transition">
+                Filetype
+              </button>
+              <button id="btn-color-complexity" class="py-1 px-2 text-center rounded text-[11px] font-medium text-slate-400 hover:text-white transition">
+                Complexity
+              </button>
+            </div>
+          </div>
+
+          <!-- Display Toggles -->
+          <div class="space-y-2 pt-1">
+            <label class="flex items-center justify-between cursor-pointer text-slate-300">
+              <span>Show Code Labels</span>
+              <input type="checkbox" id="toggle-labels" checked class="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0 cursor-pointer">
+            </label>
+            <label class="flex items-center justify-between cursor-pointer text-slate-300">
+              <span>Animate Import Bridges</span>
+              <input type="checkbox" id="toggle-pulse" checked class="rounded border-slate-700 bg-slate-900 text-pink-500 focus:ring-0 cursor-pointer">
+            </label>
+          </div>
+
+          <!-- Reset Camera & Re-fold -->
+          <div class="pt-2 flex gap-2">
+            <button id="btn-refold" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] font-medium transition flex items-center justify-center gap-1">
+              <i class="fa-solid fa-rotate-right text-xs"></i> Re-Fold Complex
+            </button>
+            <button id="btn-reset-cam" class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] font-medium transition" title="Reset Camera">
+              <i class="fa-solid fa-video"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legend Panel (Left Bottom) -->
+      <div class="absolute left-4 bottom-4 z-10 glass-panel rounded-xl p-3 text-xs shadow-xl border border-slate-800/80 pointer-events-auto">
+        <div class="font-bold uppercase tracking-wider text-slate-400 mb-2 text-[10px]">Biological Mapping Legend</div>
+        <div id="legend-filetypes" class="space-y-1.5">
+          <div class="flex items-center space-x-2">
+            <span class="w-3 h-3 rounded-full bg-[#00f0ff] inline-block shadow-sm shadow-cyan-500/50"></span>
+            <span class="text-slate-300">.js / .ts Chain (Cyan)</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="w-3 h-3 rounded-full bg-[#10b981] inline-block shadow-sm shadow-emerald-500/50"></span>
+            <span class="text-slate-300">.py Chain (Green)</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="w-3 h-3 rounded-full bg-[#f97316] inline-block shadow-sm shadow-orange-500/50"></span>
+            <span class="text-slate-300">.html Chain (Orange)</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="w-3 h-3 rounded-full bg-[#ec4899] inline-block shadow-sm shadow-pink-500/50"></span>
+            <span class="text-slate-300">.css Chain (Pink)</span>
+          </div>
+        </div>
+
+        <div class="mt-3 pt-2 border-t border-slate-800 space-y-1 text-slate-400 text-[11px]">
+          <div class="flex items-center gap-2"><i class="fa-solid fa-dna text-emerald-400"></i> Spiral Coil = Functions / Classes (&alpha;-Helix)</div>
+          <div class="flex items-center gap-2"><i class="fa-solid fa-bars-staggered text-amber-400"></i> Flat Ribbon = If/Else Logic (&beta;-Sheet)</div>
+          <div class="flex items-center gap-2"><i class="fa-solid fa-bolt text-pink-400"></i> Glowing Cylinder = Imports / Ref Links</div>
+        </div>
+      </div>
+
+      <!-- Hover Tooltip -->
+      <div id="tooltip" class="absolute pointer-events-none hidden glass-panel px-3 py-2 rounded-lg text-xs shadow-2xl z-30 border border-cyan-500/30">
+        <div id="tooltip-title" class="font-bold text-cyan-300">filename.js</div>
+        <div id="tooltip-type" class="text-slate-300 font-mono text-[11px] mt-0.5">Alpha-Helix (Function)</div>
+        <div id="tooltip-lines" class="text-slate-400 text-[10px] mt-0.5">Lines: 12 - 45</div>
+        <div id="tooltip-complexity" class="text-amber-400 text-[10px] mt-0.5 font-semibold">Cyclomatic Complexity: 4</div>
+      </div>
+
+      <!-- Right Code Inspector Sidebar -->
+      <div id="code-sidebar" class="absolute right-0 top-0 bottom-0 w-96 glass-panel border-l border-slate-800 transform translate-x-full transition-transform duration-300 ease-in-out z-20 flex flex-col pointer-events-auto shadow-2xl">
+        <!-- Sidebar Header -->
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <i id="sidebar-file-icon" class="fa-solid fa-file-code text-cyan-400"></i>
+            <div>
+              <h3 id="sidebar-filename" class="text-xs font-bold text-slate-100 truncate">Select a segment</h3>
+              <p id="sidebar-segment-info" class="text-[11px] text-slate-400">Click a protein helix/sheet to inspect source</p>
+            </div>
+          </div>
+          <button id="btn-close-sidebar" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition">
+            <i class="fa-solid fa-xmark text-base"></i>
+          </button>
+        </div>
+
+        <!-- Segment Structural Metadata Summary -->
+        <div id="sidebar-meta-box" class="px-4 py-2 bg-slate-950/50 border-b border-slate-800/80 grid grid-cols-2 gap-2 text-[11px]">
+          <div class="bg-slate-900/80 p-2 rounded border border-slate-800">
+            <span class="text-slate-500 block">Structure Motif</span>
+            <span id="meta-motif-type" class="font-semibold text-emerald-400">Alpha Helix</span>
+          </div>
+          <div class="bg-slate-900/80 p-2 rounded border border-slate-800">
+            <span class="text-slate-500 block">Line Span</span>
+            <span id="meta-line-range" class="font-mono text-cyan-300">1 - 20</span>
+          </div>
+        </div>
+
+        <!-- Code Viewer -->
+        <div id="sidebar-code-container" class="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5 bg-slate-950/90 select-text">
+          <div class="text-slate-500 italic text-center py-8">Select a protein segment in 3D space to view corresponding source code lines.</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Application Logic JavaScript -->
+  <script>
+    // Global State & Configuration
+    const AppState = {
+      files: [],           // Parsed file models
+      chains: [],          // 3D Visual Chain representations
+      bridges: [],         // Inter-chain import linkages
+      colorMode: 'filetype', // 'filetype' | 'complexity'
+      ribbonRadius: 0.45,
+      physicsStrength: 1.0,
+      glowIntensity: 1.2,
+      showLabels: true,
+      animateBridges: true,
+      selectedSegment: null,
+      hoveredMesh: null
+    };
+
+    // Color definitions
+    const FILETYPE_COLORS = {
+      js: 0x00f0ff,   // Cyan
+      ts: 0x3b82f6,   // Blue
+      py: 0x10b981,   // Emerald Green
+      html: 0xf97316, // Orange
+      css: 0xec4899,  // Pink
+      default: 0x8b5cf6 // Purple
+    };
+
+    // Pre-loaded Demo Codebase Files
+    const DEMO_FILES = [
+      {
+        path: "src/authService.js",
+        name: "authService.js",
+        ext: "js",
+        content: `import { validateToken } from './security.js';\nimport { database } from './db.js';\n\nexport class AuthService {\n  constructor(secret) {\n    this.secret = secret;\n  }\n\n  async login(user, pass) {\n    if (!user || !pass) {\n      throw new Error("Invalid credentials");\n    }\n    const userRecord = await database.findUser(user);\n    if (userRecord && userRecord.verifyPassword(pass)) {\n      return validateToken(userRecord.token);\n    } else {\n      return null;\n    }\n  }\n\n  logout(token) {\n    if (token) {\n      database.revokeToken(token);\n    }\n  }\n}`
+      },
+      {
+        path: "src/security.js",
+        name: "security.js",
+        ext: "js",
+        content: `export function validateToken(token) {\n  if (!token) {\n    return false;\n  }\n  if (token.length < 10) {\n    return false;\n  }\n  return true;\n}\n\nexport function encryptData(payload) {\n  let result = "";\n  for (let i = 0; i < payload.length; i++) {\n    result += String.fromCharCode(payload.charCodeAt(i) ^ 42);\n  }\n  return result;\n}`
+      },
+      {
+        path: "src/db.js",
+        name: "db.js",
+        ext: "js",
+        content: `export const database = {\n  users: [{ user: 'admin', token: 'sec_tok_123456789' }],\n  findUser(username) {\n    if (!username) return null;\n    return this.users.find(u => u.user === username);\n  },\n  revokeToken(token) {\n    if (token) {\n      console.log("Token revoked: " + token);\n    }\n  }\n};`
+      },
+      {
+        path: "backend/analytics.py",
+        name: "analytics.py",
+        ext: "py",
+        content: `import math\nfrom security import validateToken\n\nclass DataAnalyzer:\n    def __init__(self, data):\n        self.data = data\n\n    def compute_metrics(self):\n        if not self.data:\n            return None\n        total = sum(self.data)\n        count = len(self.data)\n        mean = total / count if count > 0 else 0\n        if mean > 50:\n            variance = sum((x - mean) ** 2 for x in self.data) / count\n            return math.sqrt(variance)\n        else:\n            return mean\n`
+      },
+      {
+        path: "index.html",
+        name: "index.html",
+        ext: "html",
+        content: `<!DOCTYPE html>\n<html>\n<head>\n  <title>App</title>\n  <link rel="stylesheet" href="styles.css">\n  <script src="src/authService.js"><\/script>\n</head>\n<body>\n  <div id="app">Hello World</div>\n</body>\n</html>`
+      },
+      {
+        path: "styles.css",
+        name: "styles.css",
+        ext: "css",
+        content: `body {\n  margin: 0;\n  background-color: #0f172a;\n}\n.container {\n  display: flex;\n  flex-direction: column;\n}\n@media (max-width: 600px) {\n  .container {\n    display: block;\n  }\n}`
+      }
+    ];
+
+    // Parser Engine
+    class CodeParser {
+      static getExtension(filename) {
+        const parts = filename.split('.');
+        return parts.length > 1 ? parts.pop().toLowerCase() : 'js';
+      }
+
+      static parseFile(fileObj) {
+        const lines = fileObj.content.split('\n');
+        const ext = fileObj.ext || this.getExtension(fileObj.name);
+        const segments = [];
+        const imports = [];
+
+        let currentSegment = null;
+
+        lines.forEach((lineText, idx) => {
+          const lineNum = idx + 1;
+          const trimmed = lineText.trim();
+
+          // Detect imports/references
+          this.detectImports(trimmed, ext, fileObj.path, imports);
+
+          // Determine structure motif
+          const motifType = this.classifyLineMotif(trimmed, ext);
+
+          if (!currentSegment || currentSegment.type !== motifType) {
+            if (currentSegment) {
+              segments.push(currentSegment);
+            }
+            currentSegment = {
+              type: motifType, // 'helix' | 'sheet' | 'coil'
+              startLine: lineNum,
+              endLine: lineNum,
+              lines: [lineText],
+              complexity: 1
+            };
+          } else {
+            currentSegment.endLine = lineNum;
+            currentSegment.lines.push(lineText);
+          }
+
+          // Calculate complexity increments
+          if (this.isDecisionPoint(trimmed, ext)) {
+            currentSegment.complexity += 1;
+          }
+        });
+
+        if (currentSegment) {
+          segments.push(currentSegment);
+        }
+
+        const totalComplexity = segments.reduce((sum, s) => sum + s.complexity, 0);
+
+        return {
+          id: fileObj.path,
+          name: fileObj.name,
+          path: fileObj.path,
+          ext: ext,
+          content: fileObj.content,
+          lineCount: lines.length,
+          segments: segments,
+          imports: imports,
+          totalComplexity: totalComplexity
+        };
+      }
+
+      static classifyLineMotif(line, ext) {
+        if (!line || line.startsWith('//') || line.startsWith('#') || line.startsWith('/*')) {
+          return 'coil';
+        }
+
+        if (ext === 'js' || ext === 'ts') {
+          if (/^(export\s+)?(async\s+)?function\b|^(export\s+)?class\b|^\s*(public|private|static)?\s*\w+\s*\(.*\)\s*\{|=>\s*\{/.test(line)) {
+            return 'helix'; // Function / Class definition -> Alpha-Helix
+          }
+          if (/^if\b|^else\b|^switch\b|^case\b|^for\b|^while\b|^do\b|^try\b|^catch\b/.test(line)) {
+            return 'sheet'; // Conditional / Branching -> Beta-Sheet
+          }
+        } else if (ext === 'py') {
+          if (/^(async\s+)?def\b|^class\b/.test(line)) {
+            return 'helix';
+          }
+          if (/^if\b|^elif\b|^else\b|^for\b|^while\b|^try\b|^except\b/.test(line)) {
+            return 'sheet';
+          }
+        } else if (ext === 'html') {
+          if (/<(script|style|template|component|form|table)\b/i.test(line)) {
+            return 'helix';
+          }
+          if (/<(div|section|article|nav|aside|header|footer)\b/i.test(line)) {
+            return 'sheet';
+          }
+        } else if (ext === 'css') {
+          if (/@media|@keyframes|@supports/.test(line)) {
+            return 'helix';
+          }
+          if (/[\.#][\w-]+\s*\{/.test(line)) {
+            return 'sheet';
+          }
+        }
+
+        return 'coil';
+      }
+
+      static isDecisionPoint(line, ext) {
+        return /\b(if|else|elif|while|for|switch|case|catch|\?\?|\&\&|\|\|)\b/.test(line);
+      }
+
+      static detectImports(line, ext, currentPath, importsList) {
+        // JS / TS import & require statements
+        const jsImportMatch = line.match(/(?:import|from|require)\s*\(?['"]([^'"]+)['"]/);
+        if (jsImportMatch) {
+          importsList.push(jsImportMatch[1]);
+        }
+        // HTML script tags & css links
+        const htmlScriptMatch = line.match(/src=['"]([^'"]+)['"]/);
+        if (htmlScriptMatch) {
+          importsList.push(htmlScriptMatch[1]);
+        }
+        const htmlCssMatch = line.match(/href=['"]([^'"]+)['"]/);
+        if (htmlCssMatch) {
+          importsList.push(htmlCssMatch[1]);
+        }
+        // Python imports
+        const pyImportMatch = line.match(/(?:from|import)\s+([\w\.]+)/);
+        if (pyImportMatch && !['math', 'os', 'sys', 're', 'json', 'time'].includes(pyImportMatch[1])) {
+          importsList.push(pyImportMatch[1]);
+        }
+      }
+    }
+
+    // 3D Scene Initialization
+    let scene, camera, renderer, controls;
+    let proteinGroup, bridgesGroup, labelsGroup;
+    let raycaster, mouse;
+
+    function init3D() {
+      const container = document.getElementById('canvas-container');
+
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x020617, 0.008);
+
+      camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+      camera.position.set(0, 35, 75);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxDistance = 300;
+      controls.minDistance = 5;
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      scene.add(ambientLight);
+
+      const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight1.position.set(50, 80, 50);
+      dirLight1.castShadow = true;
+      scene.add(dirLight1);
+
+      const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.8);
+      dirLight2.position.set(-50, -30, -50);
+      scene.add(dirLight2);
+
+      const pointLight = new THREE.PointLight(0xec4899, 1.5, 100);
+      pointLight.position.set(0, 10, 0);
+      scene.add(pointLight);
+
+      // Parent Groups
+      proteinGroup = new THREE.Group();
+      bridgesGroup = new THREE.Group();
+      labelsGroup = new THREE.Group();
+
+      scene.add(proteinGroup);
+      scene.add(bridgesGroup);
+      scene.add(labelsGroup);
+
+      // Interaction
+      raycaster = new THREE.Raycaster();
+      mouse = new THREE.Vector2();
+
+      window.addEventListener('resize', onWindowResize);
+      renderer.domElement.addEventListener('mousemove', onMouseMove);
+      renderer.domElement.addEventListener('click', onMouseClick);
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    // 3D Protein Geometry Generation Logic
+    function buildProteinComplex() {
+      // Clear previous 3D objects
+      clearGroup(proteinGroup);
+      clearGroup(bridgesGroup);
+      clearGroup(labelsGroup);
+      AppState.chains = [];
+      AppState.bridges = [];
+
+      if (AppState.files.length === 0) return;
+
+      // Initialize Force-Directed 3D Positions for Files (Chains)
+      const numFiles = AppState.files.length;
+      const initialRadius = Math.max(15, numFiles * 5);
+
+      AppState.files.forEach((file, index) => {
+        const phi = Math.acos(-1 + (2 * index) / numFiles);
+        const theta = Math.sqrt(numFiles * Math.PI) * phi;
+
+        const pos = new THREE.Vector3(
+          initialRadius * Math.cos(theta) * Math.sin(phi),
+          initialRadius * Math.sin(theta) * Math.sin(phi),
+          initialRadius * Math.cos(phi)
+        );
+
+        AppState.chains.push({
+          file: file,
+          centerPosition: pos,
+          velocity: new THREE.Vector3(),
+          segments3D: []
+        });
+      });
+
+      // Physics Iterations for Quaternary Layout
+      runPhysicsSimulation(40);
+
+      // Render 3D Protein Chains
+      AppState.chains.forEach(chain => {
+        renderProteinChain(chain);
+      });
+
+      // Render Glowing Covalent Import Bridges
+      buildCovalentBridges();
+
+      // Render Floating Text Labels
+      buildLabels();
+
+      // Update UI Stats
+      updateStats();
+    }
+
+    function renderProteinChain(chain) {
+      const segments = chain.file.segments;
+      const chainGroup = new THREE.Group();
+      chainGroup.position.copy(chain.centerPosition);
+
+      let currentPoint = new THREE.Vector3(0, 0, 0);
+      let currentDir = new THREE.Vector3(0, 1, 0).normalize();
+
+      const baseColor = FILETYPE_COLORS[chain.file.ext] || FILETYPE_COLORS.default;
+
+      segments.forEach((segment, segIdx) => {
+        const lineSpan = Math.max(2, segment.endLine - segment.startLine + 1);
+        const points = [];
+
+        if (segment.type === 'helix') {
+          // Alpha Helix: Parametric 3D Spiral Coil
+          const turns = Math.max(1.5, lineSpan * 0.35);
+          const helixRadius = 1.6;
+          const helixPitch = 0.6;
+          const steps = Math.max(20, Math.floor(turns * 12));
+
+          const perpVector = new THREE.Vector3(1, 0, 0);
+          if (Math.abs(currentDir.dot(perpVector)) > 0.9) {
+            perpVector.set(0, 1, 0);
+          }
+          const u = new THREE.Vector3().crossVectors(currentDir, perpVector).normalize();
+          const v = new THREE.Vector3().crossVectors(currentDir, u).normalize();
+
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const angle = t * turns * Math.PI * 2;
+            const h = t * lineSpan * helixPitch;
+
+            const offset = new THREE.Vector3()
+              .addScaledVector(u, Math.cos(angle) * helixRadius)
+              .addScaledVector(v, Math.sin(angle) * helixRadius)
+              .addScaledVector(currentDir, h);
+
+            points.push(currentPoint.clone().add(offset));
+          }
+
+          // Advance current point along direction
+          currentPoint = points[points.length - 1].clone();
+
+        } else if (segment.type === 'sheet') {
+          // Beta Sheet: Folded Pleated Ribbon
+          const folds = Math.max(2, Math.floor(lineSpan / 2));
+          const sheetWidth = 2.2;
+          const stepLen = 1.2;
+
+          const sideDir = new THREE.Vector3().crossVectors(currentDir, new THREE.Vector3(0, 1, 0)).normalize();
+          if (sideDir.lengthSq() < 0.1) sideDir.set(1, 0, 0);
+
+          points.push(currentPoint.clone());
+          for (let i = 1; i <= folds; i++) {
+            const sign = i % 2 === 0 ? 1 : -1;
+            const stepPos = currentPoint.clone()
+              .addScaledVector(currentDir, i * stepLen)
+              .addScaledVector(sideDir, sign * sheetWidth);
+            points.push(stepPos);
+          }
+          currentPoint = points[points.length - 1].clone();
+
+        } else {
+          // Random Coil: Smooth interpolated backbone
+          const coilLen = lineSpan * 0.8;
+          const steps = Math.max(5, Math.floor(coilLen / 2));
+          points.push(currentPoint.clone());
+
+          let tempPoint = currentPoint.clone();
+          for (let i = 1; i <= steps; i++) {
+            // slight random curve wiggle for bio feel
+            const wiggle = new THREE.Vector3(
+              (Math.sin(i * 1.5 + segIdx) * 0.8),
+              (Math.cos(i * 1.5 + segIdx) * 0.8),
+              (Math.sin(i * 0.8) * 0.8)
+            );
+            tempPoint.addScaledVector(currentDir, 1.2).add(wiggle);
+            points.push(tempPoint.clone());
+          }
+          currentPoint = points[points.length - 1].clone();
+        }
+
+        // Slightly nudge main direction for dynamic tertiary folding curve
+        currentDir.add(new THREE.Vector3(
+          Math.sin(segIdx) * 0.4,
+          Math.cos(segIdx) * 0.4,
+          Math.sin(segIdx * 0.5) * 0.4
+        )).normalize();
+
+        // Create 3D Tube Geometry from Curve
+        if (points.length >= 2) {
+          const curve = new THREE.CatmullRomCurve3(points);
+          const tubularSegments = points.length * 4;
+          const radius = segment.type === 'helix' ? AppState.ribbonRadius * 1.2 :
+                         segment.type === 'sheet' ? AppState.ribbonRadius * 0.9 : AppState.ribbonRadius * 0.6;
+
+          const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, 8, false);
+
+          // Color selection
+          let colorHex = baseColor;
+          if (AppState.colorMode === 'complexity') {
+            colorHex = getComplexityColor(segment.complexity);
+          }
+
+          const material = new THREE.MeshStandardMaterial({
+            color: colorHex,
+            roughness: 0.25,
+            metalness: 0.35,
+            clearcoat: 0.5,
+            clearcoatRoughness: 0.1
+          });
+
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+
+          // Attach metadata to mesh for raycasting inspection
+          mesh.userData = {
+            chain: chain,
+            file: chain.file,
+            segment: segment,
+            segmentIndex: segIdx,
+            colorHex: colorHex
+          };
+
+          chainGroup.add(mesh);
+          chain.segments3D.push(mesh);
+        }
+      });
+
+      proteinGroup.add(chainGroup);
+    }
+
+    // Color gradient by complexity (Heatmap: Cyan -> Yellow -> Red)
+    function getComplexityColor(complexity) {
+      const normalized = Math.min(1.0, (complexity - 1) / 8);
+      const color = new THREE.Color();
+      if (normalized < 0.5) {
+        // Cyan to Yellow
+        color.setHSL(0.5 - normalized * 0.33, 1.0, 0.5);
+      } else {
+        // Yellow to Red
+        color.setHSL(0.17 - (normalized - 0.5) * 0.34, 1.0, 0.5);
+      }
+      return color.getHex();
+    }
+
+    // Covalent Bridges (Imports & Inter-chain links)
+    function buildCovalentBridges() {
+      AppState.files.forEach(sourceFile => {
+        const sourceChain = AppState.chains.find(c => c.file.id === sourceFile.id);
+        if (!sourceChain) return;
+
+        sourceFile.imports.forEach(importStr => {
+          // Find matching target file by path or name matching
+          const targetChain = AppState.chains.find(c => {
+            if (c.file.id === sourceFile.id) return false;
+            const normImport = importStr.replace(/[\.\/]/g, '').toLowerCase();
+            const normName = c.file.name.replace(/[\.\/]/g, '').toLowerCase();
+            const normPath = c.file.path.replace(/[\.\/]/g, '').toLowerCase();
+            return normName.includes(normImport) || normPath.includes(normImport) || normImport.includes(normName);
+          });
+
+          if (targetChain) {
+            createBridgeMesh(sourceChain, targetChain);
+          }
+        });
+      });
+    }
+
+    function createBridgeMesh(sourceChain, targetChain) {
+      const p1 = sourceChain.centerPosition.clone();
+      const p2 = targetChain.centerPosition.clone();
+
+      // Curved pathway for biological linkage
+      const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+      midPoint.y += p1.distanceTo(p2) * 0.25; // Arc height
+
+      const curve = new THREE.QuadraticBezierCurve3(p1, midPoint, p2);
+      const geometry = new THREE.TubeGeometry(curve, 20, 0.25 * AppState.glowIntensity, 8, false);
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xf43f5e, // Glowing Rose Red / Pink
+        emissive: 0xec4899,
+        emissiveIntensity: 0.8 * AppState.glowIntensity,
+        roughness: 0.1,
+        transparent: true,
+        opacity: 0.85
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      bridgesGroup.add(mesh);
+
+      AppState.bridges.push({
+        mesh: mesh,
+        curve: curve,
+        material: material
+      });
+    }
+
+    // Floating HTML/Canvas Labels above Protein Chains
+    function buildLabels() {
+      if (!AppState.showLabels) return;
+
+      AppState.chains.forEach(chain => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 2;
+        ctx.roundRect(4, 4, 248, 56, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(chain.file.name, 128, 38);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(spriteMaterial);
+
+        sprite.position.copy(chain.centerPosition).add(new THREE.Vector3(0, 12, 0));
+        sprite.scale.set(12, 3, 1);
+
+        labelsGroup.add(sprite);
+      });
+    }
+
+    // 3D Physics Force-Directed Layout Algorithm
+    function runPhysicsSimulation(iterations = 30) {
+      const chains = AppState.chains;
+      if (chains.length <= 1) return;
+
+      const kRepulsion = 400 * AppState.physicsStrength;
+      const kAttraction = 0.08 * AppState.physicsStrength;
+
+      for (let iter = 0; iter < iterations; iter++) {
+        // 1. Repulsion between all chains
+        for (let i = 0; i < chains.length; i++) {
+          for (let j = i + 1; j < chains.length; j++) {
+            const c1 = chains[i];
+            const c2 = chains[j];
+            const delta = new THREE.Vector3().subVectors(c1.centerPosition, c2.centerPosition);
+            let dist = delta.length();
+            if (dist < 0.1) dist = 0.1;
+
+            const force = kRepulsion / (dist * dist);
+            delta.normalize().multiplyScalar(force);
+
+            c1.velocity.add(delta);
+            c2.velocity.sub(delta);
+          }
+        }
+
+        // 2. Attraction along import bridges
+        AppState.files.forEach(sourceFile => {
+          const c1 = chains.find(c => c.file.id === sourceFile.id);
+          if (!c1) return;
+
+          sourceFile.imports.forEach(importStr => {
+            const c2 = chains.find(c => {
+              if (c.file.id === sourceFile.id) return false;
+              const normImport = importStr.replace(/[\.\/]/g, '').toLowerCase();
+              return c.file.name.toLowerCase().includes(normImport) || c.file.path.toLowerCase().includes(normImport);
+            });
+
+            if (c2) {
+              const delta = new THREE.Vector3().subVectors(c2.centerPosition, c1.centerPosition);
+              const dist = delta.length();
+              const force = dist * kAttraction;
+
+              delta.normalize().multiplyScalar(force);
+              c1.velocity.add(delta);
+              c2.velocity.sub(delta);
+            }
+          });
+        });
+
+        // 3. Apply velocities and dampening
+        chains.forEach(c => {
+          c.centerPosition.add(c.velocity.clone().multiplyScalar(0.1));
+          c.velocity.multiplyScalar(0.7); // Dampening
+        });
+      }
+    }
+
+    function clearGroup(group) {
+      while (group.children.length > 0) {
+        const obj = group.children[0];
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(m => m.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+        group.remove(obj);
+      }
+    }
+
+    // Hover Raycasting & Interactions
+    function onMouseMove(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+
+      // Collect all chain meshes
+      const interactiveMeshes = [];
+      AppState.chains.forEach(c => interactiveMeshes.push(...c.segments3D));
+
+      const intersects = raycaster.intersectObjects(interactiveMeshes);
+
+      const tooltipEl = document.getElementById('tooltip');
+
+      if (intersects.length > 0) {
+        const mesh = intersects[0].object;
+        if (AppState.hoveredMesh !== mesh) {
+          if (AppState.hoveredMesh && AppState.hoveredMesh !== AppState.selectedSegment) {
+            AppState.hoveredMesh.material.emissive.setHex(0x000000);
+          }
+          AppState.hoveredMesh = mesh;
+          mesh.material.emissive.setHex(0x38bdf8);
+          mesh.material.emissiveIntensity = 0.5;
+        }
+
+        // Show Tooltip
+        const data = mesh.userData;
+        document.getElementById('tooltip-title').innerText = data.file.name;
+        document.getElementById('tooltip-type').innerText =
+          data.segment.type === 'helix' ? 'Alpha-Helix (Function / Class)' :
+          data.segment.type === 'sheet' ? 'Beta-Sheet (If / Else Logic)' : 'Random Coil (Backbone)';
+        document.getElementById('tooltip-lines').innerText = `Lines: ${data.segment.startLine} - ${data.segment.endLine}`;
+        document.getElementById('tooltip-complexity').innerText = `Segment Complexity: ${data.segment.complexity}`;
+
+        tooltipEl.style.left = `${event.clientX + 15}px`;
+        tooltipEl.style.top = `${event.clientY + 15}px`;
+        tooltipEl.classList.remove('hidden');
+      } else {
+        if (AppState.hoveredMesh && AppState.hoveredMesh !== AppState.selectedSegment) {
+          AppState.hoveredMesh.material.emissive.setHex(0x000000);
+          AppState.hoveredMesh = null;
+        }
+        tooltipEl.classList.add('hidden');
+      }
+    }
+
+    // Click Raycasting & Sidebar Inspection
+    function onMouseClick(event) {
+      if (!AppState.hoveredMesh) return;
+
+      const mesh = AppState.hoveredMesh;
+      const data = mesh.userData;
+
+      AppState.selectedSegment = mesh;
+      openCodeSidebar(data.file, data.segment);
+    }
+
+    function openCodeSidebar(file, segment) {
+      const sidebar = document.getElementById('code-sidebar');
+      document.getElementById('sidebar-filename').innerText = file.path;
+      document.getElementById('sidebar-file-icon').className = `fa-solid ${
+        file.ext === 'js' || file.ext === 'ts' ? 'fa-file-code text-cyan-400' :
+        file.ext === 'py' ? 'fa-brands fa-python text-emerald-400' :
+        file.ext === 'html' ? 'fa-code text-orange-400' : 'fa-hashtag text-pink-400'
+      }`;
+
+      document.getElementById('meta-motif-type').innerText =
+        segment.type === 'helix' ? 'Alpha Helix (Function)' :
+        segment.type === 'sheet' ? 'Beta Sheet (Conditional)' : 'Random Coil';
+      document.getElementById('meta-line-range').innerText = `${segment.startLine} - ${segment.endLine}`;
+
+      // Render Code Lines
+      const container = document.getElementById('sidebar-code-container');
+      container.innerHTML = '';
+
+      const lines = file.content.split('\n');
+      lines.forEach((lineText, idx) => {
+        const lineNum = idx + 1;
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'flex items-start code-line rounded px-1 py-0.5 hover:bg-slate-800/60';
+
+        const isHighlighted = lineNum >= segment.startLine && lineNum <= segment.endLine;
+        if (isHighlighted) {
+          lineDiv.classList.add('code-line-highlight');
+        }
+
+        lineDiv.innerHTML = `
+          <span class="w-10 text-right pr-3 text-slate-600 font-mono text-[11px] select-none flex-shrink-0">${lineNum}</span>
+          <span class="${isHighlighted ? 'text-slate-100 font-semibold' : 'text-slate-400'}">${escapeHtml(lineText) || '&nbsp;'}</span>
+        `;
+
+        container.appendChild(lineDiv);
+
+        // Scroll to highlighted section
+        if (lineNum === segment.startLine) {
+          setTimeout(() => {
+            lineDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 100);
+        }
+      });
+
+      sidebar.classList.remove('translate-x-full');
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function updateStats() {
+      document.getElementById('dataset-stats').classList.remove('hidden');
+      document.getElementById('stat-chains').innerText = AppState.files.length;
+
+      let helices = 0, sheets = 0;
+      AppState.files.forEach(f => {
+        f.segments.forEach(s => {
+          if (s.type === 'helix') helices++;
+          if (s.type === 'sheet') sheets++;
+        });
+      });
+
+      document.getElementById('stat-helices').innerText = helices;
+      document.getElementById('stat-sheets').innerText = sheets;
+      document.getElementById('stat-bridges').innerText = AppState.bridges.length;
+    }
+
+    // Animation Loop
+    function animate(time) {
+      requestAnimationFrame(animate);
+
+      controls.update();
+
+      // Animate Covalent Bridge Pulse
+      if (AppState.animateBridges) {
+        AppState.bridges.forEach((bridge, idx) => {
+          const pulse = (Math.sin(time * 0.003 + idx) + 1) * 0.5;
+          bridge.material.emissiveIntensity = (0.5 + pulse * 0.8) * AppState.glowIntensity;
+        });
+      }
+
+      // Slow idle rotation of protein complex
+      if (proteinGroup) {
+        proteinGroup.rotation.y += 0.0008;
+        bridgesGroup.rotation.y += 0.0008;
+        labelsGroup.rotation.y += 0.0008;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // File Processing & Event Listeners
+    function processFiles(fileList) {
+      const validExtensions = ['js', 'ts', 'py', 'html', 'css'];
+      const filePromises = [];
+
+      Array.from(fileList).forEach(file => {
+        const ext = CodeParser.getExtension(file.name);
+        if (validExtensions.includes(ext)) {
+          filePromises.push(new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              resolve({
+                path: file.webkitRelativePath || file.name,
+                name: file.name,
+                ext: ext,
+                content: e.target.result
+              });
+            };
+            reader.readAsText(file);
+          }));
+        }
+      });
+
+      Promise.all(filePromises).then(rawFiles => {
+        if (rawFiles.length === 0) {
+          alert('No supported source code files (.js, .ts, .py, .html, .css) found in selection.');
+          return;
+        }
+
+        AppState.files = rawFiles.map(rf => CodeParser.parseFile(rf));
+        document.getElementById('drop-zone').classList.add('hidden');
+        buildProteinComplex();
+      });
+    }
+
+    function loadDemoCodebase() {
+      AppState.files = DEMO_FILES.map(rf => CodeParser.parseFile(rf));
+      document.getElementById('drop-zone').classList.add('hidden');
+      buildProteinComplex();
+    }
+
+    // Setup UI Event Listeners
+    function setupUIEventListeners() {
+      // Demo load buttons
+      document.getElementById('btn-demo').addEventListener('click', loadDemoCodebase);
+      document.getElementById('btn-load-demo-inline').addEventListener('click', loadDemoCodebase);
+
+      // File Inputs
+      const handleFileSelect = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          processFiles(e.target.files);
+        }
+      };
+
+      document.getElementById('folder-upload').addEventListener('change', handleFileSelect);
+      document.getElementById('file-upload-input').addEventListener('change', handleFileSelect);
+
+      // Drag & Drop
+      const dropZone = document.getElementById('drop-zone');
+      window.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('hidden');
+        dropZone.classList.add('drag-active');
+      });
+
+      window.addEventListener('dragleave', (e) => {
+        if (e.clientX === 0 && e.clientY === 0) {
+          dropZone.classList.remove('drag-active');
+        }
+      });
+
+      window.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-active');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          processFiles(e.dataTransfer.files);
+        }
+      });
+
+      // Visual Control Panel Sliders
+      document.getElementById('slider-thickness').addEventListener('input', (e) => {
+        AppState.ribbonRadius = parseFloat(e.target.value);
+        document.getElementById('val-thickness').innerText = AppState.ribbonRadius.toFixed(2);
+        buildProteinComplex();
+      });
+
+      document.getElementById('slider-physics').addEventListener('input', (e) => {
+        AppState.physicsStrength = parseFloat(e.target.value);
+        document.getElementById('val-physics').innerText = AppState.physicsStrength.toFixed(1);
+        buildProteinComplex();
+      });
+
+      document.getElementById('slider-glow').addEventListener('input', (e) => {
+        AppState.glowIntensity = parseFloat(e.target.value);
+        document.getElementById('val-glow').innerText = AppState.glowIntensity.toFixed(1);
+        buildProteinComplex();
+      });
+
+      // Color Mode Toggles
+      const btnFiletype = document.getElementById('btn-color-filetype');
+      const btnComplexity = document.getElementById('btn-color-complexity');
+
+      btnFiletype.addEventListener('click', () => {
+        AppState.colorMode = 'filetype';
+        btnFiletype.className = 'py-1 px-2 text-center rounded text-[11px] font-medium bg-cyan-600 text-white transition';
+        btnComplexity.className = 'py-1 px-2 text-center rounded text-[11px] font-medium text-slate-400 hover:text-white transition';
+        buildProteinComplex();
+      });
+
+      btnComplexity.addEventListener('click', () => {
+        AppState.colorMode = 'complexity';
+        btnComplexity.className = 'py-1 px-2 text-center rounded text-[11px] font-medium bg-amber-600 text-white transition';
+        btnFiletype.className = 'py-1 px-2 text-center rounded text-[11px] font-medium text-slate-400 hover:text-white transition';
+        buildProteinComplex();
+      });
+
+      // Toggles
+      document.getElementById('toggle-labels').addEventListener('change', (e) => {
+        AppState.showLabels = e.target.checked;
+        labelsGroup.visible = AppState.showLabels;
+      });
+
+      document.getElementById('toggle-pulse').addEventListener('change', (e) => {
+        AppState.animateBridges = e.target.checked;
+      });
+
+      // Buttons
+      document.getElementById('btn-refold').addEventListener('click', () => {
+        buildProteinComplex();
+      });
+
+      document.getElementById('btn-reset-cam').addEventListener('click', () => {
+        camera.position.set(0, 35, 75);
+        controls.target.set(0, 0, 0);
+      });
+
+      // Sidebar Close
+      document.getElementById('btn-close-sidebar').addEventListener('click', () => {
+        document.getElementById('code-sidebar').classList.add('translate-x-full');
+        if (AppState.selectedSegment) {
+          AppState.selectedSegment.material.emissive.setHex(0x000000);
+          AppState.selectedSegment = null;
+        }
+      });
+
+      // Toggle Controls Panel
+      document.getElementById('btn-toggle-controls').addEventListener('click', () => {
+        const body = document.getElementById('controls-body');
+        const icon = document.querySelector('#btn-toggle-controls i');
+        body.classList.toggle('hidden');
+        icon.classList.toggle('fa-chevron-up');
+        icon.classList.toggle('fa-chevron-down');
+      });
+    }
+
+    // Window Load Initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      init3D();
+      setupUIEventListeners();
+      animate(0);
+
+      // Auto load demo on startup so the screen is immediately engaging
+      loadDemoCodebase();
+    });
+  </script>
+</body>
+</html>
